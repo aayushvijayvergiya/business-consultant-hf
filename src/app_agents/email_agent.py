@@ -1,0 +1,326 @@
+import os
+import sys
+from pathlib import Path
+from typing import Dict, List
+from agents import Agent, AgentOutputSchema
+import markdown
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email import encoders
+
+
+
+# Add project root to path for imports
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
+try:
+    from src.config import config
+except ImportError:
+    # Fallback if config not available
+    config = None
+
+INSTRUCTIONS = """You are an email formatting expert specializing in creating professional, well-designed HTML emails.
+You will be provided with a detailed business report. You should:
+
+1. Convert the markdown report to clean, professional HTML
+2. Apply a modern, business-appropriate email template
+3. Include proper styling for readability
+4. Embed visualizations if provided
+5. Create an appropriate subject line
+6. Optionally attach PDF version of the report
+7. Support multiple recipients if needed
+
+The email should be professional, well-formatted, and easy to read on both desktop and mobile devices."""
+
+def create_html_template(content: str, title: str = "Business Consultant Report") -> str:
+    """Create a professional HTML email template."""
+    html_template = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>{title}</title>
+        <style>
+            body {{
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+                line-height: 1.6;
+                color: #333;
+                max-width: 600px;
+                margin: 0 auto;
+                padding: 20px;
+                background-color: #f4f4f4;
+            }}
+            .email-container {{
+                background-color: #ffffff;
+                border-radius: 8px;
+                padding: 30px;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            }}
+            .header {{
+                border-bottom: 3px solid #007bff;
+                padding-bottom: 20px;
+                margin-bottom: 30px;
+            }}
+            .header h1 {{
+                color: #007bff;
+                margin: 0;
+                font-size: 24px;
+            }}
+            .content {{
+                color: #555;
+            }}
+            .content h1, .content h2, .content h3 {{
+                color: #333;
+                margin-top: 30px;
+                margin-bottom: 15px;
+            }}
+            .content h1 {{
+                font-size: 22px;
+                border-bottom: 2px solid #eee;
+                padding-bottom: 10px;
+            }}
+            .content h2 {{
+                font-size: 20px;
+            }}
+            .content h3 {{
+                font-size: 18px;
+            }}
+            .content p {{
+                margin-bottom: 15px;
+            }}
+            .content ul, .content ol {{
+                margin-bottom: 15px;
+                padding-left: 30px;
+            }}
+            .content li {{
+                margin-bottom: 8px;
+            }}
+            .content img {{
+                max-width: 100%;
+                height: auto;
+                border-radius: 4px;
+                margin: 20px 0;
+            }}
+            .content table {{
+                width: 100%;
+                border-collapse: collapse;
+                margin: 20px 0;
+            }}
+            .content table th, .content table td {{
+                border: 1px solid #ddd;
+                padding: 12px;
+                text-align: left;
+            }}
+            .content table th {{
+                background-color: #f8f9fa;
+                font-weight: bold;
+            }}
+            .content code {{
+                background-color: #f4f4f4;
+                padding: 2px 6px;
+                border-radius: 3px;
+                font-family: 'Courier New', monospace;
+                font-size: 14px;
+            }}
+            .content pre {{
+                background-color: #f4f4f4;
+                padding: 15px;
+                border-radius: 4px;
+                overflow-x: auto;
+            }}
+            .footer {{
+                margin-top: 30px;
+                padding-top: 20px;
+                border-top: 1px solid #eee;
+                color: #888;
+                font-size: 12px;
+                text-align: center;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="email-container">
+            <div class="header">
+                <h1>{title}</h1>
+            </div>
+            <div class="content">
+                {content}
+            </div>
+            <div class="footer">
+                <p>This report was generated by the Business Consultant Agent</p>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    return html_template
+
+def markdown_to_html(markdown_content: str) -> str:
+    """Convert markdown to HTML."""
+    try:
+        html = markdown.markdown(markdown_content, extensions=['extra', 'codehilite', 'tables'])
+        return html
+    except Exception:
+        # Fallback: simple conversion
+        html = markdown_content.replace('\n', '<br>\n')
+        return html
+
+def send_email_smtp(
+    to_email: str = None,
+    subject: str = None,
+    body: str = None,
+    recipients: List[str] = None,
+    pdf_attachment_path: str = None,
+    smtp_server: str = None,
+    smtp_port: int = None,
+    smtp_user: str = None,
+    smtp_password: str = None,
+    smtp_use_tls: bool = True
+) -> Dict[str, any]:
+    """
+    Send email using SMTP (Gmail, Outlook, etc.).
+    
+    Args:
+        to_email: Primary recipient email
+        subject: Email subject
+        body: HTML email body
+        recipients: Additional recipients
+        pdf_attachment_path: Path to PDF file to attach
+        smtp_server: SMTP server (e.g., 'smtp.gmail.com')
+        smtp_port: SMTP port (587 for TLS, 465 for SSL)
+        smtp_user: SMTP username (your email)
+        smtp_password: SMTP password (app password)
+        smtp_use_tls: Use TLS encryption
+    """
+    # Get config values
+    if config:
+        smtp_server = smtp_server or config.smtp_server
+        smtp_port = smtp_port or config.smtp_port
+        smtp_user = smtp_user or config.smtp_user
+        smtp_password = smtp_password or config.smtp_password
+        smtp_use_tls = config.smtp_use_tls if smtp_use_tls is None else smtp_use_tls
+        from_email = config.from_email or config.smtp_user
+        default_recipient = config.email_recipient
+    else:
+        smtp_server = smtp_server or os.getenv("SMTP_SERVER", "smtp.gmail.com")
+        smtp_port = smtp_port or int(os.getenv("SMTP_PORT", "587"))
+        smtp_user = smtp_user or os.getenv("SMTP_USER")
+        smtp_password = smtp_password or os.getenv("SMTP_PASSWORD")
+        smtp_use_tls = smtp_use_tls if smtp_use_tls is not None else os.getenv("SMTP_USE_TLS", "true").lower() == "true"
+        from_email = os.getenv("FROM_EMAIL") or smtp_user
+        default_recipient = os.getenv("EMAIL_RECIPIENT")
+    
+    if not smtp_user or not smtp_password:
+        return {"error": "SMTP credentials missing. Please set SMTP_USER and SMTP_PASSWORD."}
+    
+    # Determine recipients
+    email_recipients = []
+    if to_email:
+        email_recipients.append(to_email)
+    elif default_recipient:
+        email_recipients.append(default_recipient)
+    
+    if recipients:
+        email_recipients.extend(recipients)
+    
+    if not email_recipients:
+        return {"error": "No email recipients specified. Please provide to_email or set EMAIL_RECIPIENT."}
+    
+    try:
+        # Convert markdown to HTML if needed
+        if body:
+            if body.strip().startswith('<'):
+                html_body = body
+            else:
+                html_content = markdown_to_html(body)
+                html_body = create_html_template(html_content, subject or "Business Consultant Report")
+        else:
+            html_body = create_html_template("<p>No content provided.</p>", subject or "Business Consultant Report")
+        
+        # Create message
+        msg = MIMEMultipart('alternative')
+        msg['From'] = from_email
+        msg['To'] = email_recipients[0]
+        if len(email_recipients) > 1:
+            msg['Cc'] = ', '.join(email_recipients[1:])
+        msg['Subject'] = subject or "Business Consultant Report"
+        
+        # Add HTML body
+        msg.attach(MIMEText(html_body, 'html'))
+        
+        # Add PDF attachment if provided
+        if pdf_attachment_path and Path(pdf_attachment_path).exists():
+            with open(pdf_attachment_path, 'rb') as f:
+                part = MIMEBase('application', 'octet-stream')
+                part.set_payload(f.read())
+                encoders.encode_base64(part)
+                part.add_header(
+                    'Content-Disposition',
+                    f'attachment; filename= {Path(pdf_attachment_path).name}'
+                )
+                msg.attach(part)
+        
+        # Send email via SMTP
+        if smtp_port == 465:
+            # SSL connection
+            server = smtplib.SMTP_SSL(smtp_server, smtp_port)
+        else:
+            # TLS connection
+            server = smtplib.SMTP(smtp_server, smtp_port)
+            if smtp_use_tls:
+                server.starttls()
+        
+        server.login(smtp_user, smtp_password)
+        server.send_message(msg, from_addr=from_email, to_addrs=email_recipients)
+        server.quit()
+        
+        return {
+            "status": "success",
+            "message": f"Email sent successfully to {len(email_recipients)} recipient(s) via SMTP",
+            "recipients": email_recipients,
+            "method": "smtp"
+        }
+    except Exception as e:
+        return {"error": f"Failed to send email via SMTP: {str(e)}"}
+
+def send_email(
+    to_email: str = None, 
+    subject: str = None, 
+    body: str = None,
+    recipients: List[str] = None,
+    pdf_attachment_path: str = None,
+    visualization_paths: List[str] = None
+) -> Dict[str, any]:
+    """
+    Send an email with rich HTML formatting, optional PDF attachment, and embedded visualizations.
+    Uses SMTP for email delivery.
+    
+    Args:
+        to_email: Primary recipient email (or use config default)
+        subject: Email subject line
+        body: Email body (markdown or HTML)
+        recipients: List of additional recipients
+        pdf_attachment_path: Path to PDF file to attach
+        visualization_paths: List of paths to visualization images to embed
+    """
+    return send_email_smtp(
+        to_email=to_email,
+        subject=subject,
+        body=body,
+        recipients=recipients,
+        pdf_attachment_path=pdf_attachment_path
+    )
+
+# Create tools for email functionality
+# Email functions are utilities, not agent tools
+
+email_agent = Agent(
+    name="EmailAgent",
+    instructions=INSTRUCTIONS,
+    model=config.email_model if config and hasattr(config, 'email_model') else "gpt-4o-mini",
+    output_type=AgentOutputSchema(str, strict_json_schema=False),
+)
