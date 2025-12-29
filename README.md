@@ -1,3 +1,15 @@
+---
+title: Business Consultant
+emoji: 📉
+colorFrom: purple
+colorTo: yellow
+sdk: gradio
+sdk_version: 6.2.0
+app_file: app.py
+pinned: false
+short_description: An AI powered business consultant based on agentic pattern
+---
+
 # Multi-Agent Business Consultant System
 
 A comprehensive AI-powered business consulting system that uses multiple specialized agents to provide deep research, analysis, and strategic recommendations for business queries.
