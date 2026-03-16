@@ -1,26 +1,27 @@
 import os
 import sys
+from email import encoders
+from email.mime.base import MIMEBase
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from pathlib import Path
 from typing import Dict, List
-from agents import Agent, AgentOutputSchema
+
 import markdown
 import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from email.mime.base import MIMEBase
-from email import encoders
 
-
-
-# Add project root to path for imports
-project_root = Path(__file__).parent.parent
+# Add project root to path for imports early so local packages resolve
+project_root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(project_root))
 
 try:
+    from agents import Agent, AgentOutputSchema
     from src.config import config
 except ImportError:
     # Fallback if config not available
     config = None
+    Agent = None
+    AgentOutputSchema = None
 
 INSTRUCTIONS = """You are an email formatting expert specializing in creating professional, well-designed HTML emails.
 You will be provided with a detailed business report. You should:
@@ -34,6 +35,7 @@ You will be provided with a detailed business report. You should:
 7. Support multiple recipients if needed
 
 The email should be professional, well-formatted, and easy to read on both desktop and mobile devices."""
+
 
 def create_html_template(content: str, title: str = "Business Consultant Report") -> str:
     """Create a professional HTML email template."""
@@ -159,6 +161,7 @@ def create_html_template(content: str, title: str = "Business Consultant Report"
     """
     return html_template
 
+
 def markdown_to_html(markdown_content: str) -> str:
     """Convert markdown to HTML."""
     try:
@@ -169,18 +172,19 @@ def markdown_to_html(markdown_content: str) -> str:
         html = markdown_content.replace('\n', '<br>\n')
         return html
 
+
 def send_email_smtp(
-    to_email: str = None,
-    subject: str = None,
-    body: str = None,
-    recipients: List[str] = None,
-    pdf_attachment_path: str = None,
-    smtp_server: str = None,
-    smtp_port: int = None,
-    smtp_user: str = None,
-    smtp_password: str = None,
-    smtp_use_tls: bool = True
-) -> Dict[str, any]:
+    to_email: str | None = None,
+    subject: str | None = None,
+    body: str | None = None,
+    recipients: List[str] | None = None,
+    pdf_attachment_path: str | None = None,
+    smtp_server: str | None = None,
+    smtp_port: int | None = None,
+    smtp_user: str | None = None,
+    smtp_password: str | None = None,
+    smtp_use_tls: bool | None = None
+) -> Dict[str, str | List[str]]:
     """
     Send email using SMTP (Gmail, Outlook, etc.).
     
@@ -196,6 +200,8 @@ def send_email_smtp(
         smtp_password: SMTP password (app password)
         smtp_use_tls: Use TLS encryption
     """
+    recipients = recipients or []
+
     # Get config values
     if config:
         smtp_server = smtp_server or config.smtp_server
@@ -203,7 +209,7 @@ def send_email_smtp(
         smtp_user = smtp_user or config.smtp_user
         smtp_password = smtp_password or config.smtp_password
         smtp_use_tls = config.smtp_use_tls if smtp_use_tls is None else smtp_use_tls
-        from_email = config.from_email or config.smtp_user
+        from_email = config.from_email or config.smtp_user or ""
         default_recipient = config.email_recipient
     else:
         smtp_server = smtp_server or os.getenv("SMTP_SERVER", "smtp.gmail.com")
@@ -211,25 +217,29 @@ def send_email_smtp(
         smtp_user = smtp_user or os.getenv("SMTP_USER")
         smtp_password = smtp_password or os.getenv("SMTP_PASSWORD")
         smtp_use_tls = smtp_use_tls if smtp_use_tls is not None else os.getenv("SMTP_USE_TLS", "true").lower() == "true"
-        from_email = os.getenv("FROM_EMAIL") or smtp_user
+        from_email = os.getenv("FROM_EMAIL") or smtp_user or ""
         default_recipient = os.getenv("EMAIL_RECIPIENT")
     
     if not smtp_user or not smtp_password:
         return {"error": "SMTP credentials missing. Please set SMTP_USER and SMTP_PASSWORD."}
     
+
     # Determine recipients
-    email_recipients = []
+    email_recipients: List[str] = []
     if to_email:
         email_recipients.append(to_email)
     elif default_recipient:
         email_recipients.append(default_recipient)
-    
-    if recipients:
-        email_recipients.extend(recipients)
-    
+
+    email_recipients.extend(recipients)
+
     if not email_recipients:
         return {"error": "No email recipients specified. Please provide to_email or set EMAIL_RECIPIENT."}
-    
+
+    # Ensure from_email is a string and not None
+    if from_email is None:
+        from_email = ""
+
     try:
         # Convert markdown to HTML if needed
         if body:
@@ -240,18 +250,18 @@ def send_email_smtp(
                 html_body = create_html_template(html_content, subject or "Business Consultant Report")
         else:
             html_body = create_html_template("<p>No content provided.</p>", subject or "Business Consultant Report")
-        
+
         # Create message
         msg = MIMEMultipart('alternative')
-        msg['From'] = from_email
+        msg['From'] = str(from_email)
         msg['To'] = email_recipients[0]
         if len(email_recipients) > 1:
             msg['Cc'] = ', '.join(email_recipients[1:])
         msg['Subject'] = subject or "Business Consultant Report"
-        
+
         # Add HTML body
         msg.attach(MIMEText(html_body, 'html'))
-        
+
         # Add PDF attachment if provided
         if pdf_attachment_path and Path(pdf_attachment_path).exists():
             with open(pdf_attachment_path, 'rb') as f:
@@ -263,7 +273,7 @@ def send_email_smtp(
                     f'attachment; filename= {Path(pdf_attachment_path).name}'
                 )
                 msg.attach(part)
-        
+
         # Send email via SMTP
         if smtp_port == 465:
             # SSL connection
@@ -273,11 +283,11 @@ def send_email_smtp(
             server = smtplib.SMTP(smtp_server, smtp_port)
             if smtp_use_tls:
                 server.starttls()
-        
+
         server.login(smtp_user, smtp_password)
         server.send_message(msg, from_addr=from_email, to_addrs=email_recipients)
         server.quit()
-        
+
         return {
             "status": "success",
             "message": f"Email sent successfully to {len(email_recipients)} recipient(s) via SMTP",
@@ -287,14 +297,15 @@ def send_email_smtp(
     except Exception as e:
         return {"error": f"Failed to send email via SMTP: {str(e)}"}
 
+
 def send_email(
-    to_email: str = None, 
-    subject: str = None, 
-    body: str = None,
-    recipients: List[str] = None,
-    pdf_attachment_path: str = None,
-    visualization_paths: List[str] = None
-) -> Dict[str, any]:
+    to_email: str | None = None, 
+    subject: str | None = None, 
+    body: str | None = None,
+    recipients: List[str] | None = None,
+    pdf_attachment_path: str | None = None,
+    visualization_paths: List[str] | None = None
+) -> Dict[str, str | List[str]]:
     """
     Send an email with rich HTML formatting, optional PDF attachment, and embedded visualizations.
     Uses SMTP for email delivery.
@@ -307,20 +318,24 @@ def send_email(
         pdf_attachment_path: Path to PDF file to attach
         visualization_paths: List of paths to visualization images to embed
     """
+    visualization_paths = visualization_paths or []
+
     return send_email_smtp(
         to_email=to_email,
         subject=subject,
         body=body,
         recipients=recipients,
-        pdf_attachment_path=pdf_attachment_path
+        pdf_attachment_path=pdf_attachment_path,
     )
 
 # Create tools for email functionality
 # Email functions are utilities, not agent tools
 
-email_agent = Agent(
-    name="EmailAgent",
-    instructions=INSTRUCTIONS,
-    model=config.email_model if config and hasattr(config, 'email_model') else "gpt-4o-mini",
-    output_type=AgentOutputSchema(str, strict_json_schema=False),
-)
+email_agent = None
+if Agent and AgentOutputSchema:
+    email_agent = Agent(
+        name="EmailAgent",
+        instructions=INSTRUCTIONS,
+        model=config.email_model if config and hasattr(config, 'email_model') else "gpt-4o-mini",
+        output_type=AgentOutputSchema(str, strict_json_schema=False),
+    )
