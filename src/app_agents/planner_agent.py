@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field
 from agents import Agent, AgentOutputSchema
+from src.config import config
 
 HOW_MANY_SEARCHES = 5
 
@@ -18,6 +19,6 @@ class WebSearchPlan(BaseModel):
 planner_agent = Agent(
     name="PlannerAgent",
     instructions=INSTRUCTIONS,
-    model="gpt-4o-mini",
+    model=config.planner_model,
     output_type=AgentOutputSchema(WebSearchPlan, strict_json_schema=False),
 )

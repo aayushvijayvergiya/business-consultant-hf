@@ -1,4 +1,5 @@
 from agents import Agent, WebSearchTool, ModelSettings
+from src.config import config
 
 INSTRUCTIONS = (
     "You are a research assistant. Given a search term, you search the web for that term and "
@@ -12,7 +13,7 @@ search_agent = Agent(
     name="SearchAgent",
     instructions=INSTRUCTIONS,
     tools = [WebSearchTool(search_context_size="low")],
-    model="gpt-4o-mini",
+    model=config.search_model,
     model_settings=ModelSettings(
         tool_choice="required"
     ),

@@ -35,7 +35,14 @@ class InterfaceAgent:
     
     def __init__(self):
         """Initialize the interface agent."""
-        self.openai_client = OpenAI()
+        # Use OpenRouter if available, otherwise fallback to OpenAI
+        api_key = config.openrouter_api_key or config.openai_api_key
+        base_url = config.openrouter_base_url if config.openrouter_api_key else None
+        
+        self.openai_client = OpenAI(
+            api_key=api_key,
+            base_url=base_url
+        )
         if ResearchManager is not None:
             self.consultant_manager = ResearchManager()
         else:

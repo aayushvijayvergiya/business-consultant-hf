@@ -13,24 +13,31 @@ class Config:
     def __init__(self):
         # API Keys
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
+        self.openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
         self.pushover_user = os.getenv("PUSHOVER_USER")
         self.pushover_token = os.getenv("PUSHOVER_TOKEN")
         self.from_email = os.getenv("FROM_EMAIL", "")
         
         # Application settings
         self.name = "Aayush Vijayvergiya"
-        self.model_name = "gpt-4o-mini"
+        self.model_name = os.getenv("OPENROUTER_MODEL", "openai/gpt-4o-mini")
+        self.openrouter_base_url = "https://openrouter.ai/api/v1"
+
+        # Set environment variables for global compatibility (especially for openai-agents SDK)
+        if self.openrouter_api_key:
+            os.environ["OPENAI_BASE_URL"] = self.openrouter_base_url
+            os.environ["OPENAI_API_KEY"] = self.openrouter_api_key
         
         # Agent model configurations (different models for different app_agents)
-        self.planner_model = os.getenv("PLANNER_MODEL", "gpt-4o-mini")
-        self.search_model = os.getenv("SEARCH_MODEL", "gpt-4o-mini")
-        self.writer_model = os.getenv("WRITER_MODEL", "gpt-4o-mini")
-        self.analytics_model = os.getenv("ANALYTICS_MODEL", "gpt-4o-mini")
-        self.market_model = os.getenv("MARKET_MODEL", "gpt-4o-mini")
-        self.strategy_model = os.getenv("STRATEGY_MODEL", "gpt-4o-mini")
-        self.financial_model = os.getenv("FINANCIAL_MODEL", "gpt-4o-mini")
-        self.document_model = os.getenv("DOCUMENT_MODEL", "gpt-4o-mini")
-        self.email_model = os.getenv("EMAIL_MODEL", "gpt-4o-mini")
+        self.planner_model = os.getenv("PLANNER_MODEL", self.model_name)
+        self.search_model = os.getenv("SEARCH_MODEL", self.model_name)
+        self.writer_model = os.getenv("WRITER_MODEL", self.model_name)
+        self.analytics_model = os.getenv("ANALYTICS_MODEL", self.model_name)
+        self.market_model = os.getenv("MARKET_MODEL", self.model_name)
+        self.strategy_model = os.getenv("STRATEGY_MODEL", self.model_name)
+        self.financial_model = os.getenv("FINANCIAL_MODEL", self.model_name)
+        self.document_model = os.getenv("DOCUMENT_MODEL", self.model_name)
+        self.email_model = os.getenv("EMAIL_MODEL", self.model_name)
         
         # File paths - handle both local and deployment environments
         if os.getenv("SPACE_ID"):  # Running on Hugging Face Spaces
