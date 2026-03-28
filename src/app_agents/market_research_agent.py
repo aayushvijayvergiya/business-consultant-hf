@@ -10,10 +10,7 @@ from agents import Agent, WebSearchTool, ModelSettings, AgentOutputSchema
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-try:
-    from src.config import config
-except ImportError:
-    config = None
+from src.config import config
 
 INSTRUCTIONS = """You are a market research expert specializing in competitive analysis and market intelligence.
 Given a business query or market research request, you should:
@@ -46,19 +43,13 @@ class MarketAnalysis(BaseModel):
     recommendations: List[str] = Field(description="Strategic recommendations based on market analysis")
     sources: List[str] = Field(description="Key sources and references used")
 
-# Determine web search context size from config
-search_context_size = "low"
-if config and hasattr(config, 'web_search_context_size'):
-    search_context_size = config.web_search_context_size
-
 market_research_agent = Agent(
     name="MarketResearchAgent",
     instructions=INSTRUCTIONS,
-    tools=[WebSearchTool(search_context_size=search_context_size)],
-    model=config.market_model if config and hasattr(config, 'market_model') else "gpt-4o-mini",
+    tools=[WebSearchTool(search_context_size=config.web_search_context_size)],
+    model=config.market_model,
     model_settings=ModelSettings(
         tool_choice="required"
     ),
     output_type=AgentOutputSchema(MarketAnalysis, strict_json_schema=False),
 )
-

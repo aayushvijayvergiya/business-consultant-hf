@@ -11,6 +11,9 @@ from openai import OpenAI
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+from src.config import config
+from src.services.memory_service import get_memory_service
+
 load_dotenv(override=True)
 
 # Import consultant manager
@@ -19,15 +22,6 @@ try:
 except ImportError as e:
     print(f"Warning: Could not import ResearchManager: {e}")
     ResearchManager = None
-
-# Import config for OpenAI settings
-try:
-    from src.config import config
-except ImportError:
-    import os
-    class Config:
-        model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-    config = Config()
 
 
 class InterfaceAgent:
@@ -47,18 +41,12 @@ class InterfaceAgent:
             self.consultant_manager = ResearchManager()
         else:
             self.consultant_manager = None
-        self.conversation_state: Dict[str, Any] = {}
+        
+        self.memory_service = get_memory_service()
     
     def _refine_prompt(self, user_query: str, additional_context: Optional[str] = None) -> str:
         """
         Refine the user's prompt to make it more suitable for the consultant manager.
-        
-        Args:
-            user_query: The original user query
-            additional_context: Optional additional context gathered from clarification questions
-            
-        Returns:
-            Refined prompt string
         """
         system_prompt = """You are a helpful interface agent for a business consultant system.
 Your role is to refine and clarify user queries to make them more suitable for deep business research and analysis.
@@ -73,7 +61,6 @@ When refining a query:
 Return only the refined query, nothing else."""
 
         messages = [{"role": "system", "content": system_prompt}]
-        
         query_text = user_query
         if additional_context:
             query_text = f"{user_query}\n\nAdditional context: {additional_context}"
@@ -87,23 +74,14 @@ Return only the refined query, nothing else."""
                 temperature=0.7,
                 max_tokens=500
             )
-            refined_query = response.choices[0].message.content.strip()
-            return refined_query
+            return response.choices[0].message.content.strip()
         except Exception as e:
             print(f"Error refining prompt: {e}")
-            # Return original query if refinement fails
             return query_text
     
     def _determine_if_clarification_needed(self, user_query: str, gathered_context: Optional[str] = None) -> Tuple[bool, Optional[str]]:
         """
-        Determine if clarification/context gathering is needed before passing to consultant manager.
-        
-        Args:
-            user_query: The user's query
-            gathered_context: Any context already gathered from previous questions
-            
-        Returns:
-            Tuple of (needs_clarification: bool, clarification_question: Optional[str])
+        Determine if clarification/context gathering is needed.
         """
         default_clarification = "Thanks for reaching out! What business topic, industry, and goal should we focus on?"
 
@@ -117,7 +95,6 @@ Return only the refined query, nothing else."""
     Return only one of the above forms."""
 
         messages = [{"role": "system", "content": system_prompt}]
-        
         query_text = user_query
         if gathered_context:
             query_text = f"Original query: {user_query}\n\nContext gathered so far: {gathered_context}"
@@ -132,14 +109,11 @@ Return only the refined query, nothing else."""
                 max_tokens=200
             )
             result = response.choices[0].message.content.strip()
-            if not result:
-                return True, default_clarification
-            if "NO_CLARIFICATION_NEEDED" in result.upper():
+            if not result or "NO_CLARIFICATION_NEEDED" in result.upper():
                 return False, None
             return True, result
         except Exception as e:
             print(f"Error determining clarification need: {e}")
-            # Default to asking for clarification on error
             return True, default_clarification
     
     async def process_query(
@@ -149,138 +123,83 @@ Return only the refined query, nothing else."""
         session_id: Optional[str] = None
     ) -> str:
         """
-        Process a user query through the interface agent.
-        
-        This method:
-        1. Determines if clarification/context gathering is needed
-        2. Asks clarification questions if needed
-        3. Once enough context is gathered, refines the prompt with all context
-        4. Passes refined prompt + context to consultant manager
-        5. Returns the final output
-        
-        Args:
-            user_query: The user's input message
-            conversation_history: Optional conversation history
-            session_id: Optional session ID for state management
-            
-        Returns:
-            Response string to display to the user (either clarification question or final output)
+        Process a user query through the interface agent using MemoryService.
         """
         try:
-            # Check if consultant manager is available
             if self.consultant_manager is None:
-                return "Consultant manager is not available. Please check the configuration."
+                return "Consultant manager is not available."
             
-            # Generate or get session ID
             if session_id is None:
                 session_id = f"session_{uuid.uuid4().hex[:8]}"
             
-            # Initialize or get session state
-            if session_id not in self.conversation_state:
-                self.conversation_state[session_id] = {
-                    "original_query": None,
-                    "gathered_context": [],
-                    "waiting_for_clarification": False,
-                    "current_clarification_question": None,
-                    "ready_for_manager": False
-                }
+            # Use MemoryService for session state
+            session = self.memory_service.get_session(session_id)
+            if not session:
+                session = self.memory_service.create_session(session_id)
             
-            state = self.conversation_state[session_id]
+            state = session.get("context", {})
             
             # Check if we're waiting for a response to a clarification question
             if state.get("waiting_for_clarification"):
-                # User is responding to a clarification question
-                # Add this response to gathered context
                 if state.get("current_clarification_question"):
                     context_entry = f"Q: {state['current_clarification_question']}\nA: {user_query}"
-                    state["gathered_context"].append(context_entry)
+                    gathered_context = state.get("gathered_context_list", [])
+                    gathered_context.append(context_entry)
+                    state["gathered_context_list"] = gathered_context
                     state["waiting_for_clarification"] = False
                     state["current_clarification_question"] = None
                 
-                # Check if we need more clarification
-                gathered_context_str = "\n".join(state["gathered_context"])
+                gathered_context_str = "\n".join(state.get("gathered_context_list", []))
                 needs_clarification, clarification_question = self._determine_if_clarification_needed(
                     state.get("original_query", user_query),
                     gathered_context_str
                 )
                 
-                if needs_clarification and clarification_question:
-                    # Still need more context
+                if needs_clarification:
                     state["waiting_for_clarification"] = True
                     state["current_clarification_question"] = clarification_question
+                    self.memory_service.update_context(session_id, state)
                     return clarification_question
                 else:
-                    # We have enough context, proceed to consultant manager
                     state["ready_for_manager"] = True
             else:
-                # This is a new query
                 state["original_query"] = user_query
-                state["gathered_context"] = []
+                state["gathered_context_list"] = []
                 state["ready_for_manager"] = False
                 
-                # Check if clarification is needed
                 needs_clarification, clarification_question = self._determine_if_clarification_needed(user_query)
                 
-                if needs_clarification and clarification_question:
-                    # Need to gather more context first
+                if needs_clarification:
                     state["waiting_for_clarification"] = True
                     state["current_clarification_question"] = clarification_question
+                    self.memory_service.update_context(session_id, state)
                     return clarification_question
                 else:
-                    # No clarification needed, proceed directly to manager
                     state["ready_for_manager"] = True
             
-            # If we're ready for the manager, process the query
             if state.get("ready_for_manager"):
-                # Combine original query with all gathered context
-                gathered_context_str = "\n".join(state["gathered_context"]) if state["gathered_context"] else None
+                gathered_context_str = "\n".join(state.get("gathered_context_list", []))
+                refined_query = self._refine_prompt(state["original_query"], gathered_context_str)
+                final_prompt = f"{refined_query}\n\nContext:\n{gathered_context_str}" if gathered_context_str else refined_query
                 
-                # Refine the prompt with all context
-                refined_query = self._refine_prompt(
-                    state.get("original_query", user_query),
-                    gathered_context_str
-                )
-                
-                # Create the final prompt to pass to consultant manager
-                if gathered_context_str:
-                    final_prompt = f"{refined_query}\n\nAdditional Context:\n{gathered_context_str}"
-                else:
-                    final_prompt = refined_query
-                
-                # Pass to consultant manager
-                # The manager yields status updates, so we collect them
-                status_updates = []
                 final_output = None
-                
                 async for update in self.consultant_manager.run(final_prompt):
-                    status_updates.append(update)
-                    # The last update is typically the final report
                     final_output = update
                 
                 # Reset state after processing
                 state["ready_for_manager"] = False
                 state["waiting_for_clarification"] = False
-                state["gathered_context"] = []
-                state["current_clarification_question"] = None
+                state["gathered_context_list"] = []
+                self.memory_service.update_context(session_id, state)
                 
-                # Return the final output (usually the report)
-                if final_output:
-                    return final_output
-                
-                # If no final output, return the last status update
-                if status_updates:
-                    return status_updates[-1]
-                
-                return "Processing your query. Please wait..."
+                return final_output or "No output generated."
             
-            # Should not reach here, but return a message just in case
-            return "Processing your query. Please wait..."
+            self.memory_service.update_context(session_id, state)
+            return "Processing..."
             
         except Exception as e:
             print(f"Error in interface agent: {e}")
-            import traceback
-            traceback.print_exc()
-            return f"I encountered an error while processing your query: {str(e)}. Please try again."
+            return f"Error: {str(e)}"
 
 
 # Global instance
@@ -295,24 +214,8 @@ def get_interface_agent() -> InterfaceAgent:
 
 
 async def run(query: str, history: Optional[List] = None, session_id: Optional[str] = None) -> str:
-    """
-    Main entry point for the interface agent.
-    
-    This function is called by the chat service.
-    
-    Args:
-        query: User's input message
-        history: Optional conversation history from Gradio
-        session_id: Optional session ID (can be derived from history if needed)
-        
-    Returns:
-        Response string to display
-    """
+    """Main entry point for the interface agent."""
     agent = get_interface_agent()
-    
-    # Generate session ID from history if not provided
     if session_id is None and history:
-        # Use a simple hash of conversation length as session identifier
         session_id = f"session_{len(history)}"
-    
     return await agent.process_query(query, history, session_id)

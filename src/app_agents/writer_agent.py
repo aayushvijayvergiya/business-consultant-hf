@@ -9,10 +9,7 @@ from agents import Agent, AgentOutputSchema
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-try:
-    from src.config import config
-except ImportError:
-    config = None
+from src.config import config
 
 INSTRUCTIONS = (
     "You are a senior business consultant and researcher tasked with writing a comprehensive, "
@@ -121,12 +118,7 @@ def export_to_pdf(markdown_content: str, output_path: str = None) -> str:
         html_content = markdown.markdown(markdown_content, extensions=['extra', 'codehilite', 'tables'])
         
         if output_path is None:
-            if config and hasattr(config, 'reports_dir'):
-                reports_dir = config.reports_dir
-            else:
-                reports_dir = Path(project_root) / "data" / "reports"
-                reports_dir.mkdir(parents=True, exist_ok=True)
-            
+            reports_dir = config.reports_dir
             import uuid
             output_path = str(reports_dir / f"report_{uuid.uuid4().hex[:8]}.pdf")
         
@@ -143,6 +135,6 @@ def export_to_pdf(markdown_content: str, output_path: str = None) -> str:
 writer_agent = Agent(
     name="WriterAgent",
     instructions=INSTRUCTIONS,
-    model=config.writer_model if config and hasattr(config, 'writer_model') else "gpt-4o-mini",
+    model=config.writer_model,
     output_type=AgentOutputSchema(ReportData, strict_json_schema=False),
 )

@@ -10,10 +10,7 @@ from agents import Agent, AgentOutputSchema
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-try:
-    from src.config import config
-except ImportError:
-    config = None
+from src.config import config
 
 INSTRUCTIONS = """You are a senior strategic business consultant specializing in strategic planning and business strategy.
 Given business research findings, market analysis, and business context, you should:
@@ -58,43 +55,19 @@ class ImplementationMilestone(BaseModel):
 class StrategicPlan(BaseModel):
     """Comprehensive strategic plan."""
     executive_summary: str = Field(description="Executive summary of the strategic plan")
-    
     current_situation: str = Field(description="Analysis of the current business situation")
-    
     strategic_goals: List[str] = Field(description="List of strategic goals (SMART goals)")
-    
-    recommendations: List[StrategicRecommendation] = Field(
-        description="List of strategic recommendations, prioritized by impact and feasibility"
-    )
-    
-    risk_assessment: Dict[str, List[str]] = Field(
-        description="Risk assessment with categories (Strategic, Operational, Financial, Market) and associated risks"
-    )
-    
-    resource_allocation: Dict[str, str] = Field(
-        description="Recommended resource allocation across key areas"
-    )
-    
-    implementation_roadmap: List[ImplementationMilestone] = Field(
-        description="Detailed implementation roadmap with milestones and timelines"
-    )
-    
-    success_metrics: Dict[str, str] = Field(
-        description="Key Performance Indicators (KPIs) and success metrics to track"
-    )
-    
-    competitive_positioning: str = Field(
-        description="Recommendations for competitive positioning and differentiation"
-    )
-    
-    next_steps: List[str] = Field(
-        description="Immediate next steps to begin implementation"
-    )
+    recommendations: List[StrategicRecommendation] = Field(description="Strategic recommendations")
+    risk_assessment: Dict[str, List[str]] = Field(description="Risk assessment")
+    resource_allocation: Dict[str, str] = Field(description="Resource allocation")
+    implementation_roadmap: List[ImplementationMilestone] = Field(description="Implementation roadmap")
+    success_metrics: Dict[str, str] = Field(description="Success metrics")
+    competitive_positioning: str = Field(description="Competitive positioning")
+    next_steps: List[str] = Field(description="Immediate next steps")
 
 strategy_agent = Agent(
     name="StrategyAgent",
     instructions=INSTRUCTIONS,
-    model=config.strategy_model if config and hasattr(config, 'strategy_model') else "gpt-4o-mini",
+    model=config.strategy_model,
     output_type=AgentOutputSchema(StrategicPlan, strict_json_schema=False),
 )
-

@@ -10,18 +10,12 @@ from typing import Dict, List
 import markdown
 import smtplib
 
-# Add project root to path for imports early so local packages resolve
+# Add project root to path for imports
 project_root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(project_root))
 
-try:
-    from agents import Agent, AgentOutputSchema
-    from src.config import config
-except ImportError:
-    # Fallback if config not available
-    config = None
-    Agent = None
-    AgentOutputSchema = None
+from agents import Agent, AgentOutputSchema
+from src.config import config
 
 INSTRUCTIONS = """You are an email formatting expert specializing in creating professional, well-designed HTML emails.
 You will be provided with a detailed business report. You should:
@@ -75,65 +69,6 @@ def create_html_template(content: str, title: str = "Business Consultant Report"
             .content {{
                 color: #555;
             }}
-            .content h1, .content h2, .content h3 {{
-                color: #333;
-                margin-top: 30px;
-                margin-bottom: 15px;
-            }}
-            .content h1 {{
-                font-size: 22px;
-                border-bottom: 2px solid #eee;
-                padding-bottom: 10px;
-            }}
-            .content h2 {{
-                font-size: 20px;
-            }}
-            .content h3 {{
-                font-size: 18px;
-            }}
-            .content p {{
-                margin-bottom: 15px;
-            }}
-            .content ul, .content ol {{
-                margin-bottom: 15px;
-                padding-left: 30px;
-            }}
-            .content li {{
-                margin-bottom: 8px;
-            }}
-            .content img {{
-                max-width: 100%;
-                height: auto;
-                border-radius: 4px;
-                margin: 20px 0;
-            }}
-            .content table {{
-                width: 100%;
-                border-collapse: collapse;
-                margin: 20px 0;
-            }}
-            .content table th, .content table td {{
-                border: 1px solid #ddd;
-                padding: 12px;
-                text-align: left;
-            }}
-            .content table th {{
-                background-color: #f8f9fa;
-                font-weight: bold;
-            }}
-            .content code {{
-                background-color: #f4f4f4;
-                padding: 2px 6px;
-                border-radius: 3px;
-                font-family: 'Courier New', monospace;
-                font-size: 14px;
-            }}
-            .content pre {{
-                background-color: #f4f4f4;
-                padding: 15px;
-                border-radius: 4px;
-                overflow-x: auto;
-            }}
             .footer {{
                 margin-top: 30px;
                 padding-top: 20px;
@@ -164,13 +99,7 @@ def create_html_template(content: str, title: str = "Business Consultant Report"
 
 def markdown_to_html(markdown_content: str) -> str:
     """Convert markdown to HTML."""
-    try:
-        html = markdown.markdown(markdown_content, extensions=['extra', 'codehilite', 'tables'])
-        return html
-    except Exception:
-        # Fallback: simple conversion
-        html = markdown_content.replace('\n', '<br>\n')
-        return html
+    return markdown.markdown(markdown_content, extensions=['extra', 'codehilite', 'tables'])
 
 
 def send_email_smtp(
@@ -178,164 +107,62 @@ def send_email_smtp(
     subject: str | None = None,
     body: str | None = None,
     recipients: List[str] | None = None,
-    pdf_attachment_path: str | None = None,
-    smtp_server: str | None = None,
-    smtp_port: int | None = None,
-    smtp_user: str | None = None,
-    smtp_password: str | None = None,
-    smtp_use_tls: bool | None = None
+    pdf_attachment_path: str | None = None
 ) -> Dict[str, str | List[str]]:
     """
-    Send email using SMTP (Gmail, Outlook, etc.).
-    
-    Args:
-        to_email: Primary recipient email
-        subject: Email subject
-        body: HTML email body
-        recipients: Additional recipients
-        pdf_attachment_path: Path to PDF file to attach
-        smtp_server: SMTP server (e.g., 'smtp.gmail.com')
-        smtp_port: SMTP port (587 for TLS, 465 for SSL)
-        smtp_user: SMTP username (your email)
-        smtp_password: SMTP password (app password)
-        smtp_use_tls: Use TLS encryption
+    Send email using SMTP.
     """
+    if not config.smtp_user or not config.smtp_password:
+        return {"error": "SMTP credentials missing."}
+
     recipients = recipients or []
-
-    # Get config values
-    if config:
-        smtp_server = smtp_server or config.smtp_server
-        smtp_port = smtp_port or config.smtp_port
-        smtp_user = smtp_user or config.smtp_user
-        smtp_password = smtp_password or config.smtp_password
-        smtp_use_tls = config.smtp_use_tls if smtp_use_tls is None else smtp_use_tls
-        from_email = config.from_email or config.smtp_user or ""
-        default_recipient = config.email_recipient
-    else:
-        smtp_server = smtp_server or os.getenv("SMTP_SERVER", "smtp.gmail.com")
-        smtp_port = smtp_port or int(os.getenv("SMTP_PORT", "587"))
-        smtp_user = smtp_user or os.getenv("SMTP_USER")
-        smtp_password = smtp_password or os.getenv("SMTP_PASSWORD")
-        smtp_use_tls = smtp_use_tls if smtp_use_tls is not None else os.getenv("SMTP_USE_TLS", "true").lower() == "true"
-        from_email = os.getenv("FROM_EMAIL") or smtp_user or ""
-        default_recipient = os.getenv("EMAIL_RECIPIENT")
-    
-    if not smtp_user or not smtp_password:
-        return {"error": "SMTP credentials missing. Please set SMTP_USER and SMTP_PASSWORD."}
-    
-
-    # Determine recipients
-    email_recipients: List[str] = []
-    if to_email:
-        email_recipients.append(to_email)
-    elif default_recipient:
-        email_recipients.append(default_recipient)
-
+    email_recipients = [to_email] if to_email else ([config.email_recipient] if config.email_recipient else [])
     email_recipients.extend(recipients)
 
     if not email_recipients:
-        return {"error": "No email recipients specified. Please provide to_email or set EMAIL_RECIPIENT."}
+        return {"error": "No recipients."}
 
-    # Ensure from_email is a string and not None
-    if from_email is None:
-        from_email = ""
+    from_email = config.from_email or config.smtp_user
 
     try:
-        # Convert markdown to HTML if needed
-        if body:
-            if body.strip().startswith('<'):
-                html_body = body
-            else:
-                html_content = markdown_to_html(body)
-                html_body = create_html_template(html_content, subject or "Business Consultant Report")
-        else:
-            html_body = create_html_template("<p>No content provided.</p>", subject or "Business Consultant Report")
+        html_content = markdown_to_html(body) if body else "<p>No content.</p>"
+        html_body = create_html_template(html_content, subject or "Business Consultant Report")
 
-        # Create message
         msg = MIMEMultipart('alternative')
-        msg['From'] = str(from_email)
+        msg['From'] = from_email
         msg['To'] = email_recipients[0]
         if len(email_recipients) > 1:
             msg['Cc'] = ', '.join(email_recipients[1:])
         msg['Subject'] = subject or "Business Consultant Report"
 
-        # Add HTML body
         msg.attach(MIMEText(html_body, 'html'))
 
-        # Add PDF attachment if provided
         if pdf_attachment_path and Path(pdf_attachment_path).exists():
             with open(pdf_attachment_path, 'rb') as f:
                 part = MIMEBase('application', 'octet-stream')
                 part.set_payload(f.read())
                 encoders.encode_base64(part)
-                part.add_header(
-                    'Content-Disposition',
-                    f'attachment; filename= {Path(pdf_attachment_path).name}'
-                )
+                part.add_header('Content-Disposition', f'attachment; filename= {Path(pdf_attachment_path).name}')
                 msg.attach(part)
 
-        # Send email via SMTP
-        if smtp_port == 465:
-            # SSL connection
-            server = smtplib.SMTP_SSL(smtp_server, smtp_port)
+        if config.smtp_port == 465:
+            server = smtplib.SMTP_SSL(config.smtp_server, config.smtp_port)
         else:
-            # TLS connection
-            server = smtplib.SMTP(smtp_server, smtp_port)
-            if smtp_use_tls:
+            server = smtplib.SMTP(config.smtp_server, config.smtp_port)
+            if config.smtp_use_tls:
                 server.starttls()
 
-        server.login(smtp_user, smtp_password)
-        server.send_message(msg, from_addr=from_email, to_addrs=email_recipients)
+        server.login(config.smtp_user, config.smtp_password)
+        server.send_message(msg)
         server.quit()
 
-        return {
-            "status": "success",
-            "message": f"Email sent successfully to {len(email_recipients)} recipient(s) via SMTP",
-            "recipients": email_recipients,
-            "method": "smtp"
-        }
+        return {"status": "success", "recipients": email_recipients}
     except Exception as e:
-        return {"error": f"Failed to send email via SMTP: {str(e)}"}
+        return {"error": str(e)}
 
-
-def send_email(
-    to_email: str | None = None, 
-    subject: str | None = None, 
-    body: str | None = None,
-    recipients: List[str] | None = None,
-    pdf_attachment_path: str | None = None,
-    visualization_paths: List[str] | None = None
-) -> Dict[str, str | List[str]]:
-    """
-    Send an email with rich HTML formatting, optional PDF attachment, and embedded visualizations.
-    Uses SMTP for email delivery.
-    
-    Args:
-        to_email: Primary recipient email (or use config default)
-        subject: Email subject line
-        body: Email body (markdown or HTML)
-        recipients: List of additional recipients
-        pdf_attachment_path: Path to PDF file to attach
-        visualization_paths: List of paths to visualization images to embed
-    """
-    visualization_paths = visualization_paths or []
-
-    return send_email_smtp(
-        to_email=to_email,
-        subject=subject,
-        body=body,
-        recipients=recipients,
-        pdf_attachment_path=pdf_attachment_path,
-    )
-
-# Create tools for email functionality
-# Email functions are utilities, not agent tools
-
-email_agent = None
-if Agent and AgentOutputSchema:
-    email_agent = Agent(
-        name="EmailAgent",
-        instructions=INSTRUCTIONS,
-        model=config.email_model if config and hasattr(config, 'email_model') else "gpt-4o-mini",
-        output_type=AgentOutputSchema(str, strict_json_schema=False),
-    )
+email_agent = Agent(
+    name="EmailAgent",
+    instructions=INSTRUCTIONS,
+    model=config.email_model,
+    output_type=AgentOutputSchema(str, strict_json_schema=False),
+)

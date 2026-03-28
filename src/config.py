@@ -93,6 +93,7 @@ class Config:
         # API rate limits
         self.openai_rate_limit = int(os.getenv("OPENAI_RATE_LIMIT", "60"))  # requests per minute
         self.max_retries = int(os.getenv("MAX_RETRIES", "3"))
+        self.quality_threshold = float(os.getenv("QUALITY_THRESHOLD", "0.7"))
         
         # Cache settings
         self.enable_cache = os.getenv("ENABLE_CACHE", "true").lower() == "true"

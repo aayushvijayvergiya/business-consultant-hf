@@ -16,15 +16,12 @@ from pydantic import BaseModel, Field
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-try:
-    from src.config import config
-except ImportError:
-    config = None
+from src.config import config
 
 # Set style for visualizations
 sns.set_style("whitegrid")
 plt.rcParams['figure.figsize'] = (10, 6)
-plt.rcParams['figure.dpi'] = 300 if config and hasattr(config, 'visualization_dpi') else 150
+plt.rcParams['figure.dpi'] = config.visualization_dpi
 
 INSTRUCTIONS = """You are a data analytics expert. Given business data or metrics, you should:
 1. Analyze the data to identify trends, patterns, and insights
@@ -55,39 +52,25 @@ class AnalyticsResult(BaseModel):
 def analyze_data(data: str, analysis_type: str = "general") -> Dict[str, Any]:
     """
     Analyze data and return statistics.
-    
-    Args:
-        data: Data in CSV, JSON, or text format
-        analysis_type: Type of analysis to perform
-        
-    Returns:
-        Dictionary with analysis results
     """
     try:
-        # Try to parse as CSV first
         if '\n' in data and ',' in data.split('\n')[0]:
             df = pd.read_csv(pd.io.common.StringIO(data))
-        # Try JSON
         elif data.strip().startswith('{') or data.strip().startswith('['):
             df = pd.read_json(pd.io.common.StringIO(data))
         else:
-            # Treat as text data, try to extract numbers
             lines = data.split('\n')
             numeric_data = []
             for line in lines:
                 try:
-                    # Try to extract numbers from each line
                     numbers = [float(x) for x in line.split() if x.replace('.', '').replace('-', '').isdigit()]
-                    if numbers:
-                        numeric_data.extend(numbers)
-                except:
-                    continue
+                    if numbers: numeric_data.extend(numbers)
+                except: continue
             if numeric_data:
                 df = pd.DataFrame({'value': numeric_data})
             else:
-                return {"error": "Could not parse data into a structured format"}
+                return {"error": "Could not parse data"}
         
-        # Basic statistics
         stats = {}
         for col in df.select_dtypes(include=[np.number]).columns:
             stats[col] = {
@@ -99,11 +82,8 @@ def analyze_data(data: str, analysis_type: str = "general") -> Dict[str, Any]:
                 "count": int(df[col].count())
             }
         
-        # Correlation matrix if multiple numeric columns
         numeric_cols = df.select_dtypes(include=[np.number]).columns
-        correlations = None
-        if len(numeric_cols) > 1:
-            correlations = df[numeric_cols].corr().to_dict()
+        correlations = df[numeric_cols].corr().to_dict() if len(numeric_cols) > 1 else None
         
         return {
             "statistics": stats,
@@ -113,145 +93,63 @@ def analyze_data(data: str, analysis_type: str = "general") -> Dict[str, Any]:
             "dataframe": df
         }
     except Exception as e:
-        return {"error": f"Error analyzing data: {str(e)}"}
+        return {"error": f"Error: {str(e)}"}
 
 def create_visualization(data: str, chart_type: str = "auto", title: str = "Data Visualization", 
                         save_path: Optional[str] = None) -> str:
     """
     Create a visualization from data.
-    
-    Args:
-        data: Data to visualize
-        chart_type: Type of chart (auto, line, bar, scatter, histogram, heatmap)
-        title: Title for the chart
-        save_path: Path to save the visualization
-        
-    Returns:
-        Path to saved visualization file
     """
     try:
         analysis_result = analyze_data(data)
-        if "error" in analysis_result:
-            return analysis_result["error"]
+        if "error" in analysis_result: return analysis_result["error"]
         
         df = analysis_result["dataframe"]
         numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+        if not numeric_cols: return "No numeric columns"
         
-        if not numeric_cols:
-            return "No numeric columns found for visualization"
+        viz_dir = config.visualizations_dir
+        file_format = config.visualization_format
         
-        # Determine visualization directory
-        if config and hasattr(config, 'visualizations_dir'):
-            viz_dir = config.visualizations_dir
-        else:
-            viz_dir = Path(project_root) / "data" / "visualizations"
-            viz_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Determine file format
-        file_format = "png"
-        if config and hasattr(config, 'visualization_format'):
-            file_format = config.visualization_format
-        
-        # Generate filename
         import uuid
         filename = f"{title.replace(' ', '_')}_{uuid.uuid4().hex[:8]}.{file_format}"
         filepath = viz_dir / filename
         
         plt.figure(figsize=(10, 6))
         
-        # Auto-detect chart type if needed
         if chart_type == "auto":
             if len(numeric_cols) == 1:
-                if df.index.dtype.name.startswith('datetime') or 'date' in str(df.index.dtype).lower():
-                    chart_type = "line"
-                else:
-                    chart_type = "histogram"
+                chart_type = "line" if df.index.dtype.name.startswith('datetime') else "histogram"
             elif len(numeric_cols) == 2:
                 chart_type = "scatter"
             else:
                 chart_type = "line"
         
-        # Create appropriate visualization
         if chart_type == "line":
-            for col in numeric_cols[:5]:  # Limit to 5 columns
-                plt.plot(df.index, df[col], label=col, marker='o', markersize=3)
+            for col in numeric_cols[:5]: plt.plot(df.index, df[col], label=col, marker='o', markersize=3)
             plt.legend()
-            plt.xlabel("Index")
-            plt.ylabel("Value")
         elif chart_type == "bar":
-            for col in numeric_cols[:5]:
-                plt.bar(range(len(df)), df[col], label=col, alpha=0.7)
+            for col in numeric_cols[:5]: plt.bar(range(len(df)), df[col], label=col, alpha=0.7)
             plt.legend()
-            plt.xlabel("Index")
-            plt.ylabel("Value")
         elif chart_type == "scatter" and len(numeric_cols) >= 2:
             plt.scatter(df[numeric_cols[0]], df[numeric_cols[1]], alpha=0.6)
-            plt.xlabel(numeric_cols[0])
-            plt.ylabel(numeric_cols[1])
         elif chart_type == "histogram":
-            for col in numeric_cols[:3]:
-                plt.hist(df[col].dropna(), bins=30, alpha=0.7, label=col)
+            for col in numeric_cols[:3]: plt.hist(df[col].dropna(), bins=30, alpha=0.7, label=col)
             plt.legend()
-            plt.xlabel("Value")
-            plt.ylabel("Frequency")
         elif chart_type == "heatmap" and len(numeric_cols) > 1:
-            corr = df[numeric_cols].corr()
-            sns.heatmap(corr, annot=True, fmt='.2f', cmap='coolwarm', center=0)
-        else:
-            # Default: line chart
-            for col in numeric_cols[:5]:
-                plt.plot(df.index, df[col], label=col)
-            plt.legend()
+            sns.heatmap(df[numeric_cols].corr(), annot=True, fmt='.2f', cmap='coolwarm', center=0)
         
         plt.title(title)
         plt.tight_layout()
-        plt.savefig(filepath, format=file_format, dpi=300 if config and hasattr(config, 'visualization_dpi') else 150)
+        plt.savefig(filepath, format=file_format, dpi=config.visualization_dpi)
         plt.close()
-        
         return str(filepath)
     except Exception as e:
-        return f"Error creating visualization: {str(e)}"
-
-def generate_insights(data: str, statistics: Dict[str, Any]) -> list[str]:
-    """Generate insights from data and statistics."""
-    insights = []
-    try:
-        analysis_result = analyze_data(data)
-        if "error" in analysis_result:
-            return [f"Analysis error: {analysis_result['error']}"]
-        
-        stats = analysis_result.get("statistics", {})
-        
-        for col, col_stats in stats.items():
-            mean = col_stats.get("mean", 0)
-            std = col_stats.get("std", 0)
-            min_val = col_stats.get("min", 0)
-            max_val = col_stats.get("max", 0)
-            
-            # Identify outliers (values beyond 2 standard deviations)
-            if std > 0:
-                insights.append(f"{col}: Mean value is {mean:.2f} with standard deviation of {std:.2f}")
-                if max_val > mean + 2 * std:
-                    insights.append(f"{col}: High outliers detected (max: {max_val:.2f})")
-                if min_val < mean - 2 * std:
-                    insights.append(f"{col}: Low outliers detected (min: {min_val:.2f})")
-        
-        # Correlation insights
-        if analysis_result.get("correlations"):
-            insights.append("Multiple variables detected - correlation analysis available")
-        
-    except Exception as e:
-        insights.append(f"Error generating insights: {str(e)}")
-    
-    return insights
-
-# Analytics tools are utilities, not agent tools
-# They are called externally or by the system, not by the agent itself
+        return f"Error: {str(e)}"
 
 analytics_agent = Agent(
     name="AnalyticsAgent",
     instructions=INSTRUCTIONS,
-    model=config.analytics_model if config and hasattr(config, 'analytics_model') else "gpt-4o-mini",
+    model=config.analytics_model,
     output_type=AgentOutputSchema(AnalyticsResult, strict_json_schema=False),
 )
-
